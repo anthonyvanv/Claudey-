@@ -1,0 +1,332 @@
+{% comment %}
+  Filter tiles for one collection (thickness, shape, and any future rows).
+  Each block is one tile. Tiles are grouped into rows by their "Row" setting.
+  Clicking a tile filters the product grid instantly (no page reload).
+  Choices in different rows combine, for example 1/2" plus Heart.
+  Products match by product tag, for example thickness-1-2-inch or shape-heart.
+  Without JavaScript the tiles still work as normal links to the tag filtered page.
+  When the collection has more products than fit on one page, tiles fall back to
+  the tag filtered page so products on later pages are included.
+{% endcomment %}
+
+{% liquid
+  assign source = collections[collection.handle]
+  assign base_url = collection.url
+  assign server_filtered = false
+  if current_tags.size > 0
+    assign server_filtered = true
+  endif
+
+  assign rows = ''
+  for block in section.blocks
+    assign row = block.settings.row | strip | default: 'Thickness'
+    unless rows contains row
+      if rows == ''
+        assign rows = row
+      else
+        assign rows = rows | append: '|' | append: row
+      endif
+    endunless
+  endfor
+  assign rows = rows | split: '|'
+%}
+
+<div class="section-background color-{{ section.settings.color_scheme }}"></div>
+<div
+  class="section section--page-width color-{{ section.settings.color_scheme }} spacing-style"
+  style="{% render 'spacing-style', settings: section.settings %}"
+>
+  <thickness-filter class="thickness-cards" data-server-filtered="{{ server_filtered }}" data-total="{{ source.products_count }}">
+    {%- for row in rows -%}
+      {%- liquid
+        assign row_active = false
+        for block in section.blocks
+          assign brow = block.settings.row | strip | default: 'Thickness'
+          if brow == row and current_tags contains block.settings.tag
+            assign row_active = true
+          endif
+        endfor
+      -%}
+      <div class="thickness-cards__row" data-row="{{ row | handleize }}">
+        <p class="thickness-cards__heading">Shop by {{ row | escape }}</p>
+        <div class="thickness-cards__list" role="group" aria-label="Shop by {{ row | escape }}">
+          {%- if section.settings.show_all -%}
+            <a
+              href="{{ base_url }}"
+              class="thickness-card{% unless row_active %} is-active{% endunless %}"
+              data-tag=""
+              aria-pressed="{% if row_active %}false{% else %}true{% endif %}"
+            >
+              {{- section.settings.all_value | escape -}}
+            </a>
+          {%- endif -%}
+
+          {%- for block in section.blocks -%}
+            {%- liquid
+              assign brow = block.settings.row | strip | default: 'Thickness'
+              if brow != row
+                continue
+              endif
+              assign tag = block.settings.tag | strip
+              assign count = 0
+              for p in source.products
+                if p.tags contains tag
+                  assign count = count | plus: 1
+                endif
+              endfor
+              assign is_active = false
+              if current_tags contains tag
+                assign is_active = true
+              endif
+              if count == 0 and section.settings.hide_empty and is_active == false
+                continue
+              endif
+            -%}
+            <a
+              href="{{ base_url }}/{{ tag }}"
+              class="thickness-card{% if is_active %} is-active{% endif %}"
+              data-tag="{{ tag | escape }}"
+              aria-pressed="{{ is_active }}"
+              {{ block.shopify_attributes }}
+            >
+              {{- block.settings.value | escape -}}
+            </a>
+          {%- endfor -%}
+        </div>
+      </div>
+    {%- endfor -%}
+
+    <script type="application/json" data-thickness-map>
+      {
+        {%- for p in source.products -%}
+          "{{ p.id }}": {{ p.tags | json }}{% unless forloop.last %},{% endunless %}
+        {%- endfor -%}
+      }
+    </script>
+  </thickness-filter>
+</div>
+
+<script>
+  (function () {
+    if (customElements.get('thickness-filter')) return;
+
+    class ThicknessFilter extends HTMLElement {
+      connectedCallback() {
+        if (this.dataset.serverFiltered === 'true') return;
+        try {
+          this.map = JSON.parse(this.querySelector('[data-thickness-map]').textContent);
+        } catch (e) {
+          return;
+        }
+        this.rows = Array.from(this.querySelectorAll('[data-row]'));
+        this.state = {};
+
+        this.addEventListener('click', (event) => {
+          const card = event.target.closest('[data-tag]');
+          if (!card || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+          if (this.isPartial()) return;
+          event.preventDefault();
+          const row = card.closest('[data-row]').dataset.row;
+          let tag = card.dataset.tag;
+          if (tag && card.classList.contains('is-active')) tag = '';
+          this.state[row] = tag;
+          this.apply(true);
+        });
+
+        const fromHash = decodeURIComponent(window.location.hash.slice(1));
+        if (fromHash) {
+          fromHash.split('+').forEach((tag) => {
+            this.rows.forEach((rowEl) => {
+              if (rowEl.querySelector('[data-tag="' + CSS.escape(tag) + '"]')) this.state[rowEl.dataset.row] = tag;
+            });
+          });
+          const run = () => this.apply(false);
+          if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', run, { once: true });
+          } else {
+            run();
+          }
+        }
+      }
+
+      isPartial() {
+        const total = parseInt(this.dataset.total || '0', 10);
+        const onPage = document.querySelectorAll('.product-grid__item[data-product-id]').length;
+        return total > 0 && onPage < total;
+      }
+
+      apply(updateUrl) {
+        const active = Object.values(this.state).filter(Boolean);
+        let shown = 0;
+        document.querySelectorAll('.product-grid__item[data-product-id]').forEach((item) => {
+          const tags = this.map[item.dataset.productId] || [];
+          const show = active.every((t) => tags.includes(t));
+          item.style.display = show ? '' : 'none';
+          if (show) shown += 1;
+        });
+
+        this.rows.forEach((rowEl) => {
+          const current = this.state[rowEl.dataset.row] || '';
+          rowEl.querySelectorAll('[data-tag]').forEach((card) => {
+            const on = card.dataset.tag === current;
+            card.classList.toggle('is-active', on);
+            card.setAttribute('aria-pressed', on ? 'true' : 'false');
+          });
+        });
+
+        this.updateCount(shown);
+
+        if (updateUrl) {
+          const url = active.length ? '#' + active.join('+') : window.location.pathname + window.location.search;
+          history.replaceState(null, '', url);
+        }
+      }
+
+      updateCount(n) {
+        if (!this.countEls) {
+          this.countEls = Array.from(document.querySelectorAll('results-list *')).filter(
+            (el) => el.children.length === 0 && /^\d+\s+items?$/i.test(el.textContent.trim())
+          );
+        }
+        this.countEls.forEach((el) => {
+          el.textContent = n + (n === 1 ? ' item' : ' items');
+        });
+      }
+    }
+
+    customElements.define('thickness-filter', ThicknessFilter);
+  })();
+</script>
+
+{% stylesheet %}
+  .thickness-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .thickness-cards__heading {
+    margin: 0 0 12px;
+    font-size: 0.8125rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    opacity: 0.6;
+  }
+
+  .thickness-cards__list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 12px;
+  }
+
+  .thickness-card {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 68px;
+    padding: 14px 18px;
+    border: 1px solid #dcdcdc;
+    border-radius: 12px;
+    background: #ffffff;
+    color: #1a1a1a;
+    font-size: 1.5rem;
+    font-weight: 600;
+    line-height: 1.1;
+    text-align: center;
+    text-decoration: none;
+    cursor: pointer;
+    user-select: none;
+    transition: border-color 0.12s ease, background-color 0.12s ease, color 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
+  }
+
+  .thickness-cards__row:not(:first-child) .thickness-card {
+    font-size: 1.125rem;
+  }
+
+  .thickness-card:hover {
+    border-color: #1a1a1a;
+    background: #f6f6f6;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+  }
+
+  .thickness-card:active {
+    transform: translateY(0);
+  }
+
+  .thickness-card:focus-visible {
+    outline: 2px solid #1a1a1a;
+    outline-offset: 2px;
+  }
+
+  .thickness-card.is-active,
+  .thickness-card.is-active:hover {
+    border-color: #ffc21a;
+    background: #ffc21a;
+    color: #0e0e0e;
+    box-shadow: none;
+  }
+
+  @media screen and (max-width: 749px) {
+    .thickness-cards__list {
+      display: flex;
+      overflow-x: auto;
+      scroll-snap-type: x mandatory;
+      gap: 10px;
+      padding-bottom: 4px;
+      scrollbar-width: none;
+    }
+
+    .thickness-cards__list::-webkit-scrollbar {
+      display: none;
+    }
+
+    .thickness-card {
+      flex: 0 0 30%;
+      min-height: 56px;
+      font-size: 1.25rem;
+      scroll-snap-align: start;
+    }
+
+    .thickness-cards__row:not(:first-child) .thickness-card {
+      font-size: 1rem;
+    }
+
+    .thickness-card:hover {
+      transform: none;
+      box-shadow: none;
+    }
+  }
+{% endstylesheet %}
+
+{% schema %}
+{
+  "name": "Filter tiles",
+  "class": "thickness-cards-section",
+  "enabled_on": {
+    "templates": ["collection"]
+  },
+  "settings": [
+    { "type": "paragraph", "content": "Each tile has a Row (for example Thickness or Shape) and a product tag. Tiles with the same Row appear together under \"Shop by\" that row." },
+    { "type": "checkbox", "id": "hide_empty", "label": "Hide tiles with no published products", "default": true },
+    { "type": "checkbox", "id": "show_all", "label": "Show All tile in each row", "default": true },
+    { "type": "text", "id": "all_value", "label": "All tile text", "default": "All" },
+    { "type": "header", "content": "Layout" },
+    { "type": "color_scheme", "id": "color_scheme", "label": "Color scheme", "default": "scheme-1" },
+    { "type": "range", "id": "padding-block-start", "label": "Top padding", "min": 0, "max": 100, "step": 1, "unit": "px", "default": 0 },
+    { "type": "range", "id": "padding-block-end", "label": "Bottom padding", "min": 0, "max": 100, "step": 1, "unit": "px", "default": 24 }
+  ],
+  "blocks": [
+    {
+      "type": "card",
+      "name": "Tile",
+      "settings": [
+        { "type": "text", "id": "row", "label": "Row", "info": "Thickness, Shape, Type, and so on", "default": "Thickness" },
+        { "type": "text", "id": "tag", "label": "Product tag", "info": "Example: thickness-1-8-inch or shape-heart", "default": "thickness-1-8-inch" },
+        { "type": "text", "id": "value", "label": "Tile text", "default": "1/8\"" }
+      ]
+    }
+  ],
+  "presets": [{ "name": "Filter tiles" }]
+}
+{% endschema %}
