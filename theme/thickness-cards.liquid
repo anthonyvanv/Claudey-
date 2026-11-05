@@ -5,8 +5,8 @@
   Choices in different rows combine, for example 1/2" plus Heart.
   Products match by product tag, for example thickness-1-2-inch or shape-heart.
   Without JavaScript the tiles still work as normal links to the tag filtered page.
-  When the collection has more products than fit on one page, tiles fall back to
-  the tag filtered page so products on later pages are included.
+  When the collection has more products than fit on one page, the first tile click
+  quietly loads the other pages into the grid, so every product filters in place.
 {% endcomment %}
 
 {% liquid
@@ -121,15 +121,22 @@
         this.rows = Array.from(this.querySelectorAll('[data-row]'));
         this.state = {};
 
-        this.addEventListener('click', (event) => {
+        this.addEventListener('click', async (event) => {
           const card = event.target.closest('[data-tag]');
           if (!card || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-          if (this.isPartial()) return;
           event.preventDefault();
           const row = card.closest('[data-row]').dataset.row;
           let tag = card.dataset.tag;
           if (tag && card.classList.contains('is-active')) tag = '';
           this.state[row] = tag;
+          if (this.isPartial()) {
+            try {
+              await this.loadAll();
+            } catch (e) {
+              window.location.href = card.href;
+              return;
+            }
+          }
           this.apply(true);
         });
 
@@ -140,7 +147,12 @@
               if (rowEl.querySelector('[data-tag="' + CSS.escape(tag) + '"]')) this.state[rowEl.dataset.row] = tag;
             });
           });
-          const run = () => this.apply(false);
+          const run = async () => {
+            if (this.isPartial()) {
+              try { await this.loadAll(); } catch (e) {}
+            }
+            this.apply(false);
+          };
           if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', run, { once: true });
           } else {
@@ -150,9 +162,44 @@
       }
 
       isPartial() {
-        const total = parseInt(this.dataset.total || '0', 10);
-        const onPage = document.querySelectorAll('.product-grid__item[data-product-id]').length;
-        return total > 0 && onPage < total;
+        return !this.loaded && !!document.querySelector('.pagination a.pagination__link');
+      }
+
+      async loadAll() {
+        if (this.loading) return this.loading;
+        this.loading = (async () => {
+          const first = document.querySelector('.product-grid__item[data-product-id]');
+          if (!first) return;
+          const grid = first.parentElement;
+          const section = first.closest('.shopify-section');
+          const sectionId = section ? section.id.replace('shopify-section-', '') : '';
+          const have = new Set(
+            Array.from(document.querySelectorAll('.product-grid__item[data-product-id]')).map((el) => el.dataset.productId)
+          );
+          for (let page = 1; page <= 20; page += 1) {
+            const url = new URL(window.location.pathname, window.location.origin);
+            url.searchParams.set('page', page);
+            if (sectionId) url.searchParams.set('section_id', sectionId);
+            const res = await fetch(url.toString());
+            if (!res.ok) throw new Error('load failed');
+            const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
+            const items = Array.from(doc.querySelectorAll('.product-grid__item[data-product-id]'));
+            if (!items.length) break;
+            let added = 0;
+            items.forEach((el) => {
+              if (have.has(el.dataset.productId)) return;
+              have.add(el.dataset.productId);
+              grid.appendChild(document.importNode(el, true));
+              added += 1;
+            });
+            if (!added && page > 1) break;
+          }
+          document.querySelectorAll('nav.pagination').forEach((el) => {
+            el.style.display = 'none';
+          });
+          this.loaded = true;
+        })();
+        return this.loading;
       }
 
       apply(updateUrl) {
