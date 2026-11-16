@@ -74,7 +74,9 @@ async function syncDashboard(env, origin, orderId) {
   const items = (await env.DB.prepare("SELECT * FROM portal_items WHERE order_id=? ORDER BY id").bind(orderId).all()).results;
   const files = (await env.DB.prepare("SELECT * FROM portal_files WHERE order_id=? ORDER BY id").bind(orderId).all()).results;
   const labels = files.filter((f) => f.kind === "label");
-  const dashId = o.dash_order_id || "toot:" + orderId;
+  const dashId = o.dash_order_id || "manual:tt" + orderId;
+  // Make by: her due date, otherwise 3 days out (dashboard goal is 1 to 3 days)
+  const makeBy = o.due_date || new Date(Date.parse(o.created_at) + 3 * 864e5).toISOString().slice(0, 10);
   const labelLines = [];
   for (const l of labels) labelLines.push(`Her prepaid label: ${await fileUrl(env, origin, l.id)}`);
   const shopNote = [
@@ -89,16 +91,16 @@ async function syncDashboard(env, origin, orderId) {
   if (!existing) {
     stmts.push(
       env.DB.prepare(
-        `INSERT INTO orders (id, channel, channel_order_no, customer, email, company, order_date, ship_by, make_by, status, priority, total, buyer_note, notes, is_quote, source, created_at, updated_at, process, ship_by_set)
-         VALUES (?,?,?,?,?,?,?,?,?,'new',3,?,?,?,0,'manual',?,?,'uv',?)`
+        `INSERT INTO orders (id, channel, channel_order_no, customer, email, company, order_date, ship_by, make_by, status, priority, total, buyer_note, notes, ship_to, is_quote, source, created_at, updated_at, process, ship_by_set, is_note, addr_set)
+         VALUES (?,?,?,?,?,?,?,?,?,'new',3,?,?,?,'',0,'manual',?,?,'uv',?,0,0)`
       ).bind(
         dashId, "Email", "TT " + orderId, CLIENT.name, CLIENT.email, CLIENT.company, ts.slice(0, 10),
-        o.due_date || null, o.due_date || null, o.total, o.notes || "", shopNote, ts, ts, o.due_date ? 1 : 0
+        o.due_date || null, makeBy, o.total, o.notes || "", shopNote, ts, ts, o.due_date ? 1 : 0
       )
     );
   } else {
     stmts.push(
-      env.DB.prepare("UPDATE orders SET ship_by=?, make_by=?, total=?, buyer_note=?, notes=?, updated_at=? WHERE id=?")
+      env.DB.prepare("UPDATE orders SET ship_by=?, make_by=COALESCE(?, make_by), total=?, buyer_note=?, notes=?, updated_at=? WHERE id=?")
         .bind(o.due_date || null, o.due_date || null, o.total, o.notes || "", shopNote, ts, dashId)
     );
   }
