@@ -107,7 +107,7 @@ async function syncDashboard(env, origin, orderId) {
     const art = files.filter((f) => f.kind === "artwork" && f.item_id === it.id).pop();
     const artUrl = art ? await fileUrl(env, origin, art.id) : null;
     const isImg = art && /^image\/(png|jpe?g|webp|gif)$/i.test(art.mime || "");
-    const name = `${it.design ? it.design + ", " : ""}${it.product} (UV print, her blank)`;
+    const name = `${it.qty === 0 ? "REMOVED: " : ""}${it.design ? it.design + ", " : ""}${it.product} (UV print, her blank)`;
     const ext = "portal:" + it.id;
     const ex = await env.DB.prepare("SELECT id FROM order_items WHERE ext_id=? AND order_id=?").bind(ext, dashId).first();
     if (ex) {
@@ -293,6 +293,40 @@ export default {
           .bind("due_date" in b ? b.due_date || null : exists.due_date, "notes" in b ? String(b.notes || "").slice(0, 4000) : exists.notes, now(), id)
           .run();
         await log(env, id, role, "Order edited", changes.join("; ") + (b.notes !== undefined && b.notes !== exists.notes ? `\nPrevious notes: ${exists.notes || "(none)"}` : ""));
+        await syncDashboard(env, origin, id);
+        return json({ ok: true });
+      }
+
+      if (action === "items" && req.method === "POST") {
+        // Change size/qty/design of a tray line, or add a new line. Qty 0 marks a line removed (kept in history).
+        const b = await req.json();
+        const pr = PRODUCTS.find((x) => x.key === b.product);
+        if (!pr) return json({ error: "Pick a size." }, 400);
+        const qty = Math.max(0, Math.min(9999, Math.round(Number(b.qty))));
+        if (!Number.isFinite(qty)) return json({ error: "Enter a quantity." }, 400);
+        const design = String(b.design || "").slice(0, 200);
+        let detail;
+        if (b.item_id) {
+          const it = await env.DB.prepare("SELECT * FROM portal_items WHERE id=? AND order_id=?").bind(b.item_id, id).first();
+          if (!it) return json({ error: "Tray not found." }, 404);
+          const ch = [];
+          if (it.product !== pr.name) ch.push(`size ${it.product} → ${pr.name}`);
+          if (it.qty !== qty) ch.push(`qty ${it.qty} → ${qty}${qty === 0 ? " (removed)" : ""}`);
+          if ((it.design || "") !== design) ch.push(`design "${it.design || ""}" → "${design}"`);
+          if (!ch.length) return json({ ok: true });
+          await env.DB.prepare("UPDATE portal_items SET product=?, design=?, qty=?, unit_price=?, w_in=?, h_in=? WHERE id=?")
+            .bind(pr.name, design, qty, pr.price, pr.w, pr.h, it.id).run();
+          detail = `${it.design || it.product}: ${ch.join("; ")}`;
+        } else {
+          if (!qty) return json({ error: "Enter a quantity." }, 400);
+          await env.DB.prepare("INSERT INTO portal_items (order_id, product, design, qty, unit_price, w_in, h_in) VALUES (?,?,?,?,?,?,?)")
+            .bind(id, pr.name, design, qty, pr.price, pr.w, pr.h).run();
+          detail = `Added ${qty} × ${pr.name}${design ? " (" + design + ")" : ""}`;
+        }
+        const t = await env.DB.prepare("SELECT COALESCE(SUM(qty*unit_price),0) t FROM portal_items WHERE order_id=?").bind(id).first();
+        const total = Math.round(t.t * 100) / 100;
+        await env.DB.prepare("UPDATE portal_orders SET total=?, updated_at=? WHERE id=?").bind(total, now(), id).run();
+        await log(env, id, role, "Trays changed", detail + `\nNew total ${"$" + total.toFixed(2)}`);
         await syncDashboard(env, origin, id);
         return json({ ok: true });
       }

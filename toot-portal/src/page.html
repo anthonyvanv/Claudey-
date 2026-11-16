@@ -116,6 +116,10 @@ iframe.hero{height:420px;background:#fff}
 .thumbs{display:flex;gap:8px;margin-top:12px;overflow-x:auto}
 .thumbs img{width:64px;height:64px;border-radius:10px;object-fit:cover;background:#f0f0f3;flex:none}
 .preview{display:block;width:100%;max-height:260px;object-fit:contain;background:#f0f0f3;border-radius:10px;margin-top:10px}
+.editlink{background:none;border:0;color:var(--blue);font-size:15px;cursor:pointer;padding:0 0 0 10px}
+.editor .cell input,.editor .cell select{font-size:17px}
+.editor .acts{display:flex;gap:8px;padding:12px 16px}
+.removed{opacity:.5}
 .toast{position:fixed;left:50%;top:max(16px,env(safe-area-inset-top));transform:translate(-50%,-140%);background:rgba(29,29,31,.92);color:#fff;padding:11px 18px;border-radius:980px;font-size:15px;transition:transform .3s;z-index:20}
 .toast.on{transform:translate(-50%,0)}
 </style>
@@ -240,7 +244,7 @@ function render() {
     return `<div class="card" data-id="${o.id}">
       <div class="row"><div class="num">Order TT ${o.id}</div><span class="pill s-${o.status}">${LABEL[o.status]}</span></div>
       <div class="meta">Due ${esc(fmtDate(o.due_date))} · ${money(o.total)}</div>
-      <div class="lines">${o.items.map(i => `${i.qty} × ${esc(i.product)}${i.design ? ", " + esc(i.design) : ""}`).join("<br>")}</div>
+      <div class="lines">${o.items.filter(i => i.qty > 0).map(i => `${i.qty} × ${esc(i.product)}${i.design ? ", " + esc(i.design) : ""}`).join("<br>")}</div>
       ${(() => { const imgs = o.items.map(i => i.artwork[i.artwork.length - 1]).filter(f => f && isImg(f)); return imgs.length ? `<div class="thumbs">${imgs.map(f => `<img src="${f.url}" alt="" loading="lazy">`).join("")}</div>` : ""; })()}
       ${warn ? `<div class="warn">${warn}</div>` : ""}
     </div>`;
@@ -306,6 +310,7 @@ $("#submitOrder").onclick = async () => {
 /* Detail */
 let CUR = null;
 async function openDetail(id) {
+  if (!CUR || CUR.id !== id) EDITING = null;
   $("#dBody").innerHTML = `<div class="empty">Loading…</div>`; $("#dTitle").textContent = `Order TT ${id}`; openSheet("#detailSheet");
   CUR = await api("/api/orders/" + id); drawDetail();
 }
@@ -320,6 +325,17 @@ function hero(f) {
   if (/pdf/i.test(f.mime || "") || /\.pdf$/i.test(f.name)) return `<div class="hero-wrap"><iframe class="hero" src="${f.url}#toolbar=0&view=FitH" title="${esc(f.name)}"></iframe><a class="hero-open" href="${f.url}" target="_blank" rel="noopener">Open full size</a></div>`;
   return "";
 }
+let EDITING = null;
+function editor(i) {
+  return `<div class="editor" data-item="${i.id}">
+    <div class="cell"><label>Design name</label><input class="ed-design" value="${esc(i.design || "")}" placeholder="e.g. Silver Bells"></div>
+    <div class="two">
+      <div class="cell"><label>Size</label><select class="ed-product">${ME.products.map(p => `<option value="${p.key}" ${p.name === i.product ? "selected" : ""}>${esc(p.name)} · ${money(p.price)}</option>`).join("")}</select></div>
+      <div class="cell"><label>Qty</label><input class="ed-qty" type="number" min="0" inputmode="numeric" value="${i.qty}"></div>
+    </div>
+    <div class="acts"><button class="btn small" data-saveitem="${i.id}">Save</button><button class="btn small plain" data-canceledit>Cancel</button>${i.id !== "new" ? `<span class="meta" style="align-self:center;margin:0 0 0 4px">Qty 0 removes it</span>` : ""}</div>
+  </div>`;
+}
 function drawDetail() {
   const o = CUR, s = o.status;
   const steps = ["received", "in_production", "complete"], at = steps.indexOf(s);
@@ -332,12 +348,14 @@ function drawDetail() {
       ${s !== "received" ? `<button class="btn small plain" data-stage="submitted">Back to Received</button>` : ""}</div>` : ""}
 
     <div class="gtitle">Trays</div>
-    ${o.items.map(i => `<div class="group">
-      <div class="cell"><div class="row"><strong>${i.qty} × ${esc(i.product)}</strong><span>${money(i.unit_price * i.qty)}</span></div>${i.design ? `<div class="meta" style="margin:2px 0 0">${esc(i.design)}</div>` : ""}</div>
+    ${o.items.map(i => `<div class="group ${i.qty === 0 ? "removed" : ""}">
+      ${EDITING === i.id ? editor(i) : `<div class="cell"><div class="row"><strong>${i.qty === 0 ? "Removed: " : i.qty + " × "}${esc(i.product)}</strong><span>${money(i.unit_price * i.qty)}<button class="editlink" data-edit="${i.id}">Edit</button></span></div>${i.design ? `<div class="meta" style="margin:2px 0 0">${esc(i.design)}</div>` : ""}</div>`}
       ${hero(i.artwork[i.artwork.length - 1])}
       ${i.artwork.length ? i.artwork.slice().reverse().map(fileRow).join("") : `<div class="cell warn" style="margin:0">No artwork yet</div>`}
       <div class="cell"><label class="drop"><span class="thumb">+</span><span>${i.artwork.length ? "Add revised artwork" : "Add artwork"}</span><input type="file" data-up="artwork" data-item="${i.id}"></label></div>
     </div>`).join("")}
+
+    ${EDITING === "new" ? `<div class="group">${editor({ id: "new", product: ME.products[0].name, qty: 1, design: "" })}</div>` : `<button class="btn ghost addline" data-edit="new">Add Another Tray</button>`}
 
     <div class="gtitle">Shipping label</div>
     <div class="group">
@@ -372,6 +390,15 @@ $("#dBody").addEventListener("change", async e => {
 $("#dBody").addEventListener("click", async e => {
   const t = e.target;
   try {
+    if (t.dataset.edit) { EDITING = t.dataset.edit === "new" ? "new" : +t.dataset.edit; drawDetail(); return; }
+    if (t.dataset.canceledit !== undefined) { EDITING = null; drawDetail(); return; }
+    if (t.dataset.saveitem) {
+      const box = t.closest(".editor");
+      const body = { product: $(".ed-product", box).value, qty: $(".ed-qty", box).value, design: $(".ed-design", box).value };
+      if (t.dataset.saveitem !== "new") body.item_id = +t.dataset.saveitem;
+      await api(`/api/orders/${CUR.id}/items`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      EDITING = null; toast("Trays updated"); await openDetail(CUR.id); load(); return;
+    }
     if (t.dataset.stage) { await api(`/api/orders/${CUR.id}/stage`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ stage: t.dataset.stage }) }); toast("Status updated"); await openDetail(CUR.id); load(); }
     if (t.id === "saveEdit") { await api(`/api/orders/${CUR.id}/edit`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ due_date: $("#eDue").value, notes: $("#eNotes").value }) }); toast("Saved"); await openDetail(CUR.id); load(); }
     if (t.id === "sendMsg") { const text = $("#msg").value.trim(); if (!text) return; await api(`/api/orders/${CUR.id}/message`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) }); toast("Message sent"); await openDetail(CUR.id); }
