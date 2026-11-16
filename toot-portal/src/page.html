@@ -109,6 +109,13 @@ header .by{color:var(--sub);font-size:15px;margin-top:4px}
 .hist .when{color:var(--sub);font-size:13px}
 .hist .msg{white-space:pre-wrap;margin-top:2px}
 .ownerbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:22px}
+.hero{display:block;width:100%;max-height:420px;object-fit:contain;background:#f0f0f3;border:0;border-bottom:1px solid var(--line)}
+iframe.hero{height:420px;background:#fff}
+.hero-wrap{position:relative;display:block}
+.hero-open{position:absolute;right:10px;bottom:10px;background:rgba(29,29,31,.72);color:#fff;font-size:13px;padding:5px 11px;border-radius:980px;text-decoration:none;backdrop-filter:blur(8px)}
+.thumbs{display:flex;gap:8px;margin-top:12px;overflow-x:auto}
+.thumbs img{width:64px;height:64px;border-radius:10px;object-fit:cover;background:#f0f0f3;flex:none}
+.preview{display:block;width:100%;max-height:260px;object-fit:contain;background:#f0f0f3;border-radius:10px;margin-top:10px}
 .toast{position:fixed;left:50%;top:max(16px,env(safe-area-inset-top));transform:translate(-50%,-140%);background:rgba(29,29,31,.92);color:#fff;padding:11px 18px;border-radius:980px;font-size:15px;transition:transform .3s;z-index:20}
 .toast.on{transform:translate(-50%,0)}
 </style>
@@ -234,6 +241,7 @@ function render() {
       <div class="row"><div class="num">Order TT ${o.id}</div><span class="pill s-${o.status}">${LABEL[o.status]}</span></div>
       <div class="meta">Due ${esc(fmtDate(o.due_date))} · ${money(o.total)}</div>
       <div class="lines">${o.items.map(i => `${i.qty} × ${esc(i.product)}${i.design ? ", " + esc(i.design) : ""}`).join("<br>")}</div>
+      ${(() => { const imgs = o.items.map(i => i.artwork[i.artwork.length - 1]).filter(f => f && isImg(f)); return imgs.length ? `<div class="thumbs">${imgs.map(f => `<img src="${f.url}" alt="" loading="lazy">`).join("")}</div>` : ""; })()}
       ${warn ? `<div class="warn">${warn}</div>` : ""}
     </div>`;
   }).join("");
@@ -259,7 +267,7 @@ function drawLines() {
         <div class="cell"><label>Product</label><select data-k="product">${ME.products.map(p => `<option value="${p.key}" ${p.key === l.product ? "selected" : ""}>${esc(p.name)} · ${money(p.price)}</option>`).join("")}</select></div>
         <div class="cell"><label>Qty</label><input data-k="qty" type="number" min="1" inputmode="numeric" value="${l.qty}"></div>
       </div>
-      <div class="cell"><label class="drop"><span class="thumb" ${l.preview ? `style="background-image:url(${l.preview})"` : ""}>${l.preview ? "" : (l.file ? "FILE" : "+")}</span><span>${l.file ? esc(l.file.name) : "Add print ready artwork"}</span><input type="file" data-k="file"></label></div>
+      <div class="cell"><label class="drop"><span class="thumb" ${l.preview ? `style="background-image:url(${l.preview})"` : ""}>${l.preview ? "" : (l.file ? "FILE" : "+")}</span><span>${l.file ? esc(l.file.name) : "Add print ready artwork"}</span><input type="file" data-k="file"></label>${l.preview ? `<img class="preview" src="${l.preview}" alt="">` : ""}</div>
     </div>`).join("");
   calcTotal();
 }
@@ -306,6 +314,12 @@ function fileRow(f) {
     <span class="thumb" ${isImg(f) ? `style="background-image:url(${f.url})"` : ""}>${isImg(f) ? "" : esc((f.name.split(".").pop() || "").toUpperCase().slice(0,4))}</span>
     <span class="fname">${esc(f.name)}<div class="fsub">${esc(f.uploaded_by)} · ${fmtWhen(f.uploaded_at)}</div></span></a>`;
 }
+function hero(f) {
+  if (!f) return "";
+  if (isImg(f)) return `<a class="hero-wrap" href="${f.url}" target="_blank" rel="noopener"><img class="hero" src="${f.url}" alt="${esc(f.name)}"><span class="hero-open">Open full size</span></a>`;
+  if (/pdf/i.test(f.mime || "") || /\.pdf$/i.test(f.name)) return `<div class="hero-wrap"><iframe class="hero" src="${f.url}#toolbar=0&view=FitH" title="${esc(f.name)}"></iframe><a class="hero-open" href="${f.url}" target="_blank" rel="noopener">Open full size</a></div>`;
+  return "";
+}
 function drawDetail() {
   const o = CUR, s = o.status;
   const steps = ["received", "in_production", "complete"], at = steps.indexOf(s);
@@ -320,6 +334,7 @@ function drawDetail() {
     <div class="gtitle">Trays</div>
     ${o.items.map(i => `<div class="group">
       <div class="cell"><div class="row"><strong>${i.qty} × ${esc(i.product)}</strong><span>${money(i.unit_price * i.qty)}</span></div>${i.design ? `<div class="meta" style="margin:2px 0 0">${esc(i.design)}</div>` : ""}</div>
+      ${hero(i.artwork[i.artwork.length - 1])}
       ${i.artwork.length ? i.artwork.slice().reverse().map(fileRow).join("") : `<div class="cell warn" style="margin:0">No artwork yet</div>`}
       <div class="cell"><label class="drop"><span class="thumb">+</span><span>${i.artwork.length ? "Add revised artwork" : "Add artwork"}</span><input type="file" data-up="artwork" data-item="${i.id}"></label></div>
     </div>`).join("")}
