@@ -1,0 +1,23 @@
+name = "toot-trays-portal"
+main = "src/index.js"
+compatibility_date = "2026-11-01"
+account_id = "dcb29b34360cdb31ce8a01b98b9600b9"
+workers_dev = true
+routes = [
+  { pattern = "toottrays.princefabrication.com", custom_domain = true }
+]
+
+# Same database as the production dashboard, so portal orders land in production automatically.
+[[d1_databases]]
+binding = "DB"
+database_name = "prince-dashboard"
+database_id = "2b0d542a-3789-4e35-810c-6cec7c6378da"
+
+# Artwork and shipping labels
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "toot-trays"
+
+# Secrets (set once with wrangler secret put):
+#   PORTAL_PASSWORD  shared password for Nicola and Anthony
+#   OWNER_PASSWORD   Anthony only; unlocks In production / Complete buttons
