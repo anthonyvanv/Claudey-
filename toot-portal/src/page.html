@@ -15,7 +15,7 @@
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:var(--bg);color:var(--ink);font-size:17px;line-height:1.4;-webkit-font-smoothing:antialiased}
 button,input,select,textarea{font:inherit;color:inherit}
-.wrap{max-width:820px;margin:0 auto;padding:max(20px,env(safe-area-inset-top)) 20px 120px}
+.wrap{max-width:1120px;margin:0 auto;padding:max(20px,env(safe-area-inset-top)) 20px 120px}
 .hidden{display:none!important}
 
 /* Login */
@@ -43,8 +43,24 @@ header .by{color:var(--sub);font-size:15px;margin-top:4px}
 .seg button.on{background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.12);font-weight:600}
 
 /* Order cards */
-.list{display:grid;gap:12px}
-.card{background:var(--card);border-radius:var(--r);padding:18px 20px;box-shadow:0 1px 2px rgba(0,0,0,.04);cursor:pointer;transition:transform .15s,box-shadow .15s}
+.list{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
+@media(min-width:700px){.list{grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:20px}}
+.tile{background:var(--card);border-radius:var(--r);overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.04);cursor:pointer;transition:transform .2s,box-shadow .2s;display:flex;flex-direction:column}
+.tile:hover{box-shadow:0 10px 30px rgba(0,0,0,.09);transform:translateY(-2px)}
+.tile:active{transform:scale(.985)}
+.cover{aspect-ratio:4/3;background:#ececf0;display:grid;gap:2px;overflow:hidden}
+.cover.n2{grid-template-columns:1fr 1fr}
+.cover.n3,.cover.n4{grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr}
+.cover.n3 img:first-child{grid-row:span 2}
+.cover img{width:100%;height:100%;object-fit:cover;display:block}
+.cover .noart{display:grid;place-items:center;color:var(--sub);font-size:14px}
+.tile .tbody{padding:12px 14px 14px}
+.tile .num{font-size:16px}
+.tile .meta{font-size:13px;margin-top:2px}
+.tile .pill{display:inline-block;margin-top:8px;font-size:12px;padding:3px 9px}
+.tile .warn{font-size:12px;margin-top:6px}
+@media(min-width:700px){.tile .num{font-size:18px}.tile .meta{font-size:14px}.tile .tbody{padding:14px 18px 18px}}
+.card{background:var(--card);border-radius:var(--r);box-shadow:0 1px 2px rgba(0,0,0,.04);cursor:pointer;transition:transform .15s,box-shadow .15s}
 .card:hover{box-shadow:0 6px 24px rgba(0,0,0,.07)}
 .card:active{transform:scale(.995)}
 .row{display:flex;align-items:center;justify-content:space-between;gap:12px}
@@ -57,7 +73,7 @@ header .by{color:var(--sub);font-size:15px;margin-top:4px}
 .s-complete{background:#e9f7ef;color:var(--green)}
 .s-canceled{background:#f2f2f2;color:var(--sub)}
 .warn{color:var(--orange);font-size:14px;margin-top:8px;font-weight:500}
-.empty{text-align:center;color:var(--sub);padding:60px 20px}
+.empty{grid-column:1/-1;text-align:center;color:var(--sub);padding:60px 20px}
 
 .fab{position:fixed;left:50%;transform:translateX(-50%);bottom:max(24px,env(safe-area-inset-bottom));box-shadow:0 8px 30px rgba(0,113,227,.35);padding:15px 28px;font-size:17px;z-index:5}
 .fab:active{transform:translateX(-50%) scale(.98)}
@@ -239,14 +255,20 @@ function render() {
   const list = ORDERS.filter(o => FILTER === "all" ? true : FILTER === "complete" ? o.status === "complete" : (o.status === "received" || o.status === "in_production"));
   if (!list.length) { $("#list").innerHTML = `<div class="empty">${FILTER === "open" ? "No open orders. Tap New Order to send one over." : "Nothing here yet."}</div>`; return; }
   $("#list").innerHTML = list.map(o => {
-    const noArt = o.items.some(i => !i.artwork.length);
-    const warn = o.status !== "complete" && o.status !== "canceled" ? [noArt ? "Artwork missing" : "", !o.labels.length ? "Shipping label needed" : ""].filter(Boolean).join(" · ") : "";
-    return `<div class="card" data-id="${o.id}">
-      <div class="row"><div class="num">Order TT ${o.id}</div><span class="pill s-${o.status}">${LABEL[o.status]}</span></div>
-      <div class="meta">Due ${esc(fmtDate(o.due_date))} · ${money(o.total)}</div>
-      <div class="lines">${o.items.filter(i => i.qty > 0).map(i => `${i.qty} × ${esc(i.product)}${i.design ? ", " + esc(i.design) : ""}`).join("<br>")}</div>
-      ${(() => { const imgs = o.items.map(i => i.artwork[i.artwork.length - 1]).filter(f => f && isImg(f)); return imgs.length ? `<div class="thumbs">${imgs.map(f => `<img src="${f.url}" alt="" loading="lazy">`).join("")}</div>` : ""; })()}
-      ${warn ? `<div class="warn">${warn}</div>` : ""}
+    const live = o.items.filter(i => i.qty > 0);
+    const noArt = live.some(i => !i.artwork.length);
+    const warn = o.status !== "complete" && o.status !== "canceled" ? [noArt ? "Artwork missing" : "", !o.labels.length ? "Label needed" : ""].filter(Boolean).join(" · ") : "";
+    const imgs = live.map(i => i.artwork[i.artwork.length - 1]).filter(f => f && isImg(f)).slice(0, 4);
+    const count = live.reduce((n, i) => n + i.qty, 0);
+    return `<div class="card tile" data-id="${o.id}">
+      <div class="cover n${imgs.length}">${imgs.length ? imgs.map(f => `<img src="${f.url}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`).join("") : `<div class="noart">No artwork yet</div>`}</div>
+      <div class="tbody">
+        <div class="num">Order TT ${o.id}</div>
+        <div class="meta">Due ${esc(fmtDate(o.due_date))}</div>
+        <div class="meta">${count} ${count === 1 ? "item" : "items"} · ${money(o.total)}</div>
+        <span class="pill s-${o.status}">${LABEL[o.status]}</span>
+        ${warn ? `<div class="warn">${warn}</div>` : ""}
+      </div>
     </div>`;
   }).join("");
 }
